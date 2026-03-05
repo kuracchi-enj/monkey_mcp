@@ -69,10 +69,13 @@ module MonkeyMcp
         content: [{ type: "text", text: result_text }],
         **(is_error ? { isError: true } : {})
       })
+    rescue MonkeyMcp::RouteNotFound => e
+      jsonrpc_error(id, -32_601, e.message)
     end
 
     # Dispatch to the host application via Rack::MockRequest.
-    # Uses the Rails router to resolve the correct path and HTTP verb.
+    # Uses the Rails router to resolve path and HTTP verb.
+    # Raises MonkeyMcp::RouteNotFound if the route cannot be resolved.
     def internal_dispatch(tool, arguments)
       action          = tool[:action]
       controller_path = tool[:controller].gsub("::", "/").gsub(/Controller$/, "").underscore
@@ -88,8 +91,8 @@ module MonkeyMcp
       }
 
       if %w[POST PATCH PUT].include?(http_method)
-        env_opts[:input]          = body_params.to_json
-        env_opts["CONTENT_TYPE"]  = "application/json"
+        env_opts[:input]         = body_params.to_json
+        env_opts["CONTENT_TYPE"] = "application/json"
       elsif body_params.any?
         env_opts["QUERY_STRING"] = body_params.to_query
       end
@@ -103,39 +106,39 @@ module MonkeyMcp
       [status, body_str]
     end
 
-    # Use Rails router to find the real path and HTTP verb for controller+action.
-    # Falls back to RESTful convention if the route cannot be found.
+    # Resolve path and HTTP verb from the Rails route table.
+    # Raises RouteNotFound if no matching route exists — no silent fallback.
     def resolve_route(controller_path, action, id)
       route_params = { controller: controller_path, action: action, only_path: true }
       route_params[:id] = id if id
 
       path = Rails.application.routes.url_for(route_params)
 
-      # Find HTTP verb from route table
       http_method = Rails.application.routes.routes
         .find { |r| r.defaults[:controller] == controller_path && r.defaults[:action] == action }
-        &.verb
-        &.upcase
+        &.verb&.upcase
 
       http_method = action_to_http_method(action) if http_method.blank?
 
       [path, http_method]
     rescue ActionController::UrlGenerationError
-      # Fallback: build RESTful path manually
-      base_path = "/#{controller_path}"
-      path      = id ? "#{base_path}/#{id}" : base_path
-      [path, action_to_http_method(action)]
+      raise MonkeyMcp::RouteNotFound,
+        "No route found for #{controller_path}##{action}. " \
+        "Ensure the action is mapped in config/routes.rb."
     end
 
+    # Build params hash for the request body / query string.
+    # For create/update: wrap in the resource key for Strong Parameters.
+    # For all other actions: pass arguments directly (excluding :id which goes in the URL path).
     def build_body_params(controller_path, action, arguments)
+      non_id_args = arguments.except("id")
+
       case action
       when "create", "update"
         resource_key = controller_path.split("/").last.singularize
-        { resource_key => arguments.except("id") }
-      when "index"
-        arguments
+        { resource_key => non_id_args }
       else
-        {}
+        non_id_args
       end
     end
 

@@ -5,7 +5,7 @@ JSON-RPC 2.0 準拠の `POST /mcp` エンドポイントを提供し、AI エー
 
 ## 特徴
 
-- **自動ツール登録**: `include MonkeyMcp::Toolable` を追加するだけで、コントローラの public アクションが MCP ツールとして登録される
+- **自動ツール登録**: `include MonkeyMcp::Toolable` を追加するだけで、コントローラの public メソッドのうち、routes に実在するアクションのみ MCP ツールとして登録される
 - **input_schema 自動生成**: ActiveRecord の `columns_hash` からリクエストスキーマを自動生成
 - **mcp_desc デコレータ**: アクション直前に `mcp_desc "説明文"` を書くだけでツールの説明を設定
 - **Rails Engine**: `POST /mcp` ルートを自動でマウント
@@ -46,7 +46,7 @@ class Api::V1::TasksController < ApplicationController
 end
 ```
 
-`mcp_desc` を省略した場合も public メソッドは自動登録されます（description は空文字列）。
+`mcp_desc` を省略した場合も routes に一致するアクションは自動登録されます（description は空文字列）。routes に存在しない utility メソッドは登録されません。
 
 ### 2. ApplicationController で内部トークンを認証する
 

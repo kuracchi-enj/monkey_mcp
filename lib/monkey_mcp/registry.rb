@@ -2,26 +2,29 @@
 
 module MonkeyMcp
   # Thread-safe registry that holds all registered MCP tool definitions.
-  # input_schema can be a Hash or a Proc (evaluated lazily on first access).
+  #
+  # Both input_schema and route_check can be a Proc (evaluated lazily on first access).
+  # Tools whose route_check returns false are silently excluded from all/find.
   class Registry
     @tools = {}
     @mutex = Mutex.new
 
     class << self
-      def register(name:, description:, input_schema:, controller:, action:)
+      def register(name:, description:, input_schema:, route_check:, controller:, action:)
         @mutex.synchronize do
           @tools[name] = {
-            name: name,
+            name:        name,
             description: description,
             input_schema: input_schema,
-            controller: controller,
-            action: action
+            route_check: route_check,
+            controller:  controller,
+            action:      action
           }
         end
       end
 
       def all
-        @mutex.synchronize { @tools.values.map { |t| resolve(t) } }
+        @mutex.synchronize { @tools.values.filter_map { |t| resolve(t) } }
       end
 
       def find(name)
@@ -35,10 +38,14 @@ module MonkeyMcp
 
       private
 
-      # Evaluate a lazily-defined input_schema Proc, or return a Hash as-is
+      # Resolve a tool entry: evaluate lazy Procs, return nil if route doesn't exist
       def resolve(tool)
+        route_check = tool[:route_check]
+        return nil if route_check.respond_to?(:call) && !route_check.call
+
         schema = tool[:input_schema]
         schema = schema.call if schema.respond_to?(:call)
+
         tool.merge(input_schema: schema)
       end
     end

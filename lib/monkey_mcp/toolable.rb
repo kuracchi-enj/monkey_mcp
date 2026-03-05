@@ -3,7 +3,7 @@
 module MonkeyMcp
   # Include this concern in any Rails controller to auto-register its actions as MCP tools.
   #
-  # All public methods defined directly in the including class are auto-registered.
+  # Only public methods that correspond to an actual route are registered.
   # Use `mcp_desc` immediately before a method definition to attach a description.
   #
   # Example:
@@ -11,15 +11,15 @@ module MonkeyMcp
   #     include MonkeyMcp::Toolable
   #
   #     mcp_desc "List all tasks"
-  #     def index; end   # registered as "task_index" with description
+  #     def index; end   # registered as "task_index" if route exists
   #
-  #     def show; end    # registered as "task_show" with empty description
+  #     def show; end    # registered as "task_show" with empty description if route exists
+  #
+  #     def helper_method; end  # NOT registered — no matching route
   #   end
   #
-  # Tool name format: demodulized, singularized controller name + action
+  # Tool name: demodulized, singularized controller name + action
   #   Api::V1::TasksController#index => "task_index"
-  #
-  # input_schema is built lazily (avoids DB access at class load time).
   module Toolable
     extend ActiveSupport::Concern
 
@@ -34,14 +34,14 @@ module MonkeyMcp
       end
 
       # Auto-register every public method defined directly in this class.
-      # Skips inherited methods and non-public methods.
+      # Route existence is checked lazily at first access to avoid issues
+      # with load order (controllers can load before routes are compiled).
       def method_added(method_name)
         super
 
         desc = @_pending_mcp_desc
         @_pending_mcp_desc = nil
 
-        # Only register public methods defined in this class (not inherited)
         return unless public_method_defined?(method_name)
         return if superclass.method_defined?(method_name)
 
@@ -51,11 +51,21 @@ module MonkeyMcp
       private
 
       def _register_mcp_tool(action:, description:)
-        tool_name   = _mcp_tool_name(action)
-        model_class = _infer_model
-        action_sym  = action
+        tool_name       = _mcp_tool_name(action)
+        model_class     = _infer_model
+        action_sym      = action
+        controller_path = name.gsub("::", "/").gsub(/Controller$/, "").underscore
 
-        # Build schema lazily to avoid DB connection at class load time
+        # Lazily check route existence — routes are definitely loaded by the time
+        # tools/list or tools/call is first invoked
+        route_check = -> {
+          Rails.application.routes.routes.any? do |r|
+            r.defaults[:controller] == controller_path &&
+              r.defaults[:action]    == action_sym.to_s
+          end
+        }
+
+        # Build schema lazily to avoid DB access at class load time
         schema_builder = -> {
           model_class ? MonkeyMcp::SchemaBuilder.build(model: model_class, action: action_sym) : _empty_schema
         }
@@ -64,6 +74,7 @@ module MonkeyMcp
           name:         tool_name,
           description:  description,
           input_schema: schema_builder,
+          route_check:  route_check,
           controller:   name,
           action:       action.to_s
         )
