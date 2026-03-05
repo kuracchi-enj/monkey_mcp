@@ -2,6 +2,7 @@
 
 require "rack"
 require "json"
+require "action_controller/api"
 
 module MonkeyMcp
   class McpController < ActionController::API

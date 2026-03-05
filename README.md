@@ -52,13 +52,14 @@ end
 
 ```ruby
 class ApplicationController < ActionController::Base
+  include MonkeyMcp::ControllerHelpers
+
   before_action :require_login
+  protect_with_internal_token! :require_login
 
   private
 
   def require_login
-    # MonkeyMcp の内部サブリクエストはログイン不要にする
-    return if request.headers["X-Mcp-Internal-Token"] == MonkeyMcp.configuration.internal_token
     redirect_to login_path unless logged_in?
   end
 end

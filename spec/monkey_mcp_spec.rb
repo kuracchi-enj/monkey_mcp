@@ -22,6 +22,7 @@ RSpec.describe MonkeyMcp do
     it "registers and retrieves a tool" do
       described_class.register(
         name: "test_tool", description: "A test", input_schema: {},
+        route_check: -> { true },
         controller: "TestController", action: "index"
       )
       expect(described_class.find("test_tool")[:name]).to eq("test_tool")
@@ -34,6 +35,7 @@ RSpec.describe MonkeyMcp do
     it "clears tools on reset!" do
       described_class.register(
         name: "test_tool", description: "", input_schema: {},
+        route_check: -> { true },
         controller: "TestController", action: "index"
       )
       described_class.reset!
@@ -44,6 +46,7 @@ RSpec.describe MonkeyMcp do
       called = false
       described_class.register(
         name: "lazy_tool", description: "", input_schema: -> { called = true; { "type" => "object" } },
+        route_check: -> { true },
         controller: "TestController", action: "index"
       )
       expect(called).to be false
