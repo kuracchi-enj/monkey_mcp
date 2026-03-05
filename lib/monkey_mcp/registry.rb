@@ -2,6 +2,7 @@
 
 module MonkeyMcp
   # Thread-safe registry that holds all registered MCP tool definitions.
+  # input_schema can be a Hash or a Proc (evaluated lazily on first access).
   class Registry
     @tools = {}
     @mutex = Mutex.new
@@ -20,16 +21,25 @@ module MonkeyMcp
       end
 
       def all
-        @mutex.synchronize { @tools.values.dup }
+        @mutex.synchronize { @tools.values.map { |t| resolve(t) } }
       end
 
       def find(name)
-        @mutex.synchronize { @tools[name] }
+        @mutex.synchronize { (t = @tools[name]) ? resolve(t) : nil }
       end
 
-      # Called on Rails reloader to avoid duplicate registrations
+      # Called by Engine on each Rails reload to avoid duplicate registrations
       def reset!
         @mutex.synchronize { @tools.clear }
+      end
+
+      private
+
+      # Evaluate a lazily-defined input_schema Proc, or return a Hash as-is
+      def resolve(tool)
+        schema = tool[:input_schema]
+        schema = schema.call if schema.respond_to?(:call)
+        tool.merge(input_schema: schema)
       end
     end
   end

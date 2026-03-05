@@ -13,6 +13,8 @@ module MonkeyMcp
   #
   # The generated tool name uses the demodulized, singularized controller name:
   #   Api::V1::TasksController#index => "task_index"
+  #
+  # input_schema is built lazily on first use (avoids DB access at class load time).
   module Toolable
     extend ActiveSupport::Concern
 
@@ -41,21 +43,25 @@ module MonkeyMcp
       private
 
       def _register_mcp_tool(action:, description:)
-        tool_name = _mcp_tool_name(action)
-        model     = _infer_model
-        schema    = model ? MonkeyMcp::SchemaBuilder.build(model: model, action: action) : _empty_schema
+        tool_name    = _mcp_tool_name(action)
+        model_class  = _infer_model
+        action_sym   = action
+
+        # Build schema lazily to avoid DB connection at class load time
+        schema_builder = -> {
+          model_class ? MonkeyMcp::SchemaBuilder.build(model: model_class, action: action_sym) : _empty_schema
+        }
 
         MonkeyMcp::Registry.register(
           name:         tool_name,
           description:  description,
-          input_schema: schema,
+          input_schema: schema_builder,
           controller:   name,
           action:       action.to_s
         )
       end
 
       # "Api::V1::TasksController#index" => "task_index"
-      # Uses the demodulized, singularized controller segment as prefix.
       def _mcp_tool_name(action)
         resource = name
           .demodulize
