@@ -11,6 +11,7 @@ require_relative "monkey_mcp/configuration"
 require_relative "monkey_mcp/registry"
 require_relative "monkey_mcp/schema_builder"
 require_relative "monkey_mcp/toolable"
+require_relative "monkey_mcp/controller_helpers"
 require_relative "monkey_mcp/mcp_controller"
 require_relative "monkey_mcp/engine"
 

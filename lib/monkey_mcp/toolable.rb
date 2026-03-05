@@ -3,20 +3,14 @@
 module MonkeyMcp
   # Include this concern in any Rails controller to auto-register its actions as MCP tools.
   #
-  # Only public methods that correspond to an actual route are registered.
+  # Only public methods that:
+  #   1. Are defined directly in the including class (not inherited)
+  #   2. Are NOT in configuration.excluded_tool_methods
+  #   3. Correspond to an actual route (checked lazily at first tool access)
+  # are registered as MCP tools.
+  #
   # Use `mcp_desc` immediately before a method definition to attach a description.
-  #
-  # Example:
-  #   class Api::V1::TasksController < ApplicationController
-  #     include MonkeyMcp::Toolable
-  #
-  #     mcp_desc "List all tasks"
-  #     def index; end   # registered as "task_index" if route exists
-  #
-  #     def show; end    # registered as "task_show" with empty description if route exists
-  #
-  #     def helper_method; end  # NOT registered — no matching route
-  #   end
+  # Methods without `mcp_desc` are registered with an empty description.
   #
   # Tool name: demodulized, singularized controller name + action
   #   Api::V1::TasksController#index => "task_index"
@@ -34,8 +28,7 @@ module MonkeyMcp
       end
 
       # Auto-register every public method defined directly in this class.
-      # Route existence is checked lazily at first access to avoid issues
-      # with load order (controllers can load before routes are compiled).
+      # Route existence and excluded_tool_methods are checked lazily at first access.
       def method_added(method_name)
         super
 
@@ -56,9 +49,10 @@ module MonkeyMcp
         action_sym      = action
         controller_path = name.gsub("::", "/").gsub(/Controller$/, "").underscore
 
-        # Lazily check route existence — routes are definitely loaded by the time
-        # tools/list or tools/call is first invoked
+        # Lazily check route existence and excluded_tool_methods
         route_check = -> {
+          return false if MonkeyMcp.configuration.excluded_tool_methods.map(&:to_sym).include?(action_sym)
+
           Rails.application.routes.routes.any? do |r|
             r.defaults[:controller] == controller_path &&
               r.defaults[:action]    == action_sym.to_s

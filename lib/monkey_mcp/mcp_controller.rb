@@ -114,11 +114,16 @@ module MonkeyMcp
 
       path = Rails.application.routes.url_for(route_params)
 
-      http_method = Rails.application.routes.routes
-        .find { |r| r.defaults[:controller] == controller_path && r.defaults[:action] == action }
-        &.verb&.upcase
+      # When multiple routes share the same controller#action (e.g. `match ... via: [:get, :post]`),
+      # prefer the route whose verb matches the RESTful convention for this action.
+      matching_routes = Rails.application.routes.routes
+        .select { |r| r.defaults[:controller] == controller_path && r.defaults[:action] == action }
 
-      http_method = action_to_http_method(action) if http_method.blank?
+      expected_verb = action_to_http_method(action)
+      matched_route = matching_routes.find { |r| r.verb.upcase == expected_verb } ||
+                      matching_routes.first
+
+      http_method = matched_route&.verb&.upcase || expected_verb
 
       [path, http_method]
     rescue ActionController::UrlGenerationError
