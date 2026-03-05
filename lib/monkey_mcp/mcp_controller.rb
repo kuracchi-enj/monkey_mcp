@@ -62,7 +62,6 @@ module MonkeyMcp
       return jsonrpc_error(id, -32_602, "Unknown tool: #{tool_name}") unless tool
 
       status, body_str = internal_dispatch(tool, arguments)
-
       result_text = status == 204 ? { success: true }.to_json : body_str
       is_error = status < 200 || status >= 300
 
@@ -72,25 +71,27 @@ module MonkeyMcp
       })
     end
 
-    # Dispatch to the host application via Rack::MockRequest
+    # Dispatch to the host application via Rack::MockRequest.
+    # Uses the Rails router to resolve the correct path and HTTP verb.
     def internal_dispatch(tool, arguments)
-      action = tool[:action]
+      action          = tool[:action]
       controller_path = tool[:controller].gsub("::", "/").gsub(/Controller$/, "").underscore
+      id              = arguments["id"]&.to_s
 
-      http_method = action_to_http_method(action)
-      path, params = build_path_and_params(controller_path, action, arguments)
+      path, http_method = resolve_route(controller_path, action, id)
+      body_params       = build_body_params(controller_path, action, arguments)
 
       env_opts = {
         method: http_method,
-        "HTTP_ACCEPT"  => "application/json",
+        "HTTP_ACCEPT"               => "application/json",
         "HTTP_X_MCP_INTERNAL_TOKEN" => MonkeyMcp.configuration.internal_token
       }
 
       if %w[POST PATCH PUT].include?(http_method)
-        env_opts[:input] = params.to_json
-        env_opts["CONTENT_TYPE"] = "application/json"
-      else
-        env_opts["QUERY_STRING"] = params.to_query if params.any?
+        env_opts[:input]          = body_params.to_json
+        env_opts["CONTENT_TYPE"]  = "application/json"
+      elsif body_params.any?
+        env_opts["QUERY_STRING"] = body_params.to_query
       end
 
       env = Rack::MockRequest.env_for(path, **env_opts)
@@ -102,6 +103,42 @@ module MonkeyMcp
       [status, body_str]
     end
 
+    # Use Rails router to find the real path and HTTP verb for controller+action.
+    # Falls back to RESTful convention if the route cannot be found.
+    def resolve_route(controller_path, action, id)
+      route_params = { controller: controller_path, action: action, only_path: true }
+      route_params[:id] = id if id
+
+      path = Rails.application.routes.url_for(route_params)
+
+      # Find HTTP verb from route table
+      http_method = Rails.application.routes.routes
+        .find { |r| r.defaults[:controller] == controller_path && r.defaults[:action] == action }
+        &.verb
+        &.upcase
+
+      http_method = action_to_http_method(action) if http_method.blank?
+
+      [path, http_method]
+    rescue ActionController::UrlGenerationError
+      # Fallback: build RESTful path manually
+      base_path = "/#{controller_path}"
+      path      = id ? "#{base_path}/#{id}" : base_path
+      [path, action_to_http_method(action)]
+    end
+
+    def build_body_params(controller_path, action, arguments)
+      case action
+      when "create", "update"
+        resource_key = controller_path.split("/").last.singularize
+        { resource_key => arguments.except("id") }
+      when "index"
+        arguments
+      else
+        {}
+      end
+    end
+
     def action_to_http_method(action)
       case action
       when "index", "show" then "GET"
@@ -110,28 +147,6 @@ module MonkeyMcp
       when "destroy"       then "DELETE"
       else "GET"
       end
-    end
-
-    def build_path_and_params(controller_path, action, arguments)
-      base_path = "/#{controller_path}"
-      id = arguments["id"]
-
-      path = id ? "#{base_path}/#{id}" : base_path
-
-      params = case action
-               when "create"
-                 resource_key = controller_path.split("/").last.singularize
-                 { resource_key => arguments.except("id") }
-               when "update"
-                 resource_key = controller_path.split("/").last.singularize
-                 { resource_key => arguments.except("id") }
-               when "index"
-                 arguments
-               else
-                 {}
-               end
-
-      [path, params]
     end
 
     def jsonrpc_result(id, result)

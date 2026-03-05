@@ -3,49 +3,57 @@
 module MonkeyMcp
   # Include this concern in any Rails controller to auto-register its actions as MCP tools.
   #
-  # Usage:
+  # All public methods defined directly in the including class are auto-registered.
+  # Use `mcp_desc` immediately before a method definition to attach a description.
+  #
+  # Example:
   #   class Api::V1::TasksController < ApplicationController
   #     include MonkeyMcp::Toolable
   #
   #     mcp_desc "List all tasks"
-  #     def index; end
+  #     def index; end   # registered as "task_index" with description
+  #
+  #     def show; end    # registered as "task_show" with empty description
   #   end
   #
-  # The generated tool name uses the demodulized, singularized controller name:
+  # Tool name format: demodulized, singularized controller name + action
   #   Api::V1::TasksController#index => "task_index"
   #
-  # input_schema is built lazily on first use (avoids DB access at class load time).
+  # input_schema is built lazily (avoids DB access at class load time).
   module Toolable
     extend ActiveSupport::Concern
 
     included do
       @_pending_mcp_desc = nil
-
-      # Fires after each method definition — captures the pending description
-      def self.method_added(method_name)
-        super
-        return unless @_pending_mcp_desc
-
-        desc = @_pending_mcp_desc
-        @_pending_mcp_desc = nil
-
-        _register_mcp_tool(action: method_name.to_sym, description: desc)
-      end
     end
 
     class_methods do
       # Decorator: attach a description to the next method defined.
-      # Call immediately before `def action_name`.
       def mcp_desc(text)
         @_pending_mcp_desc = text
+      end
+
+      # Auto-register every public method defined directly in this class.
+      # Skips inherited methods and non-public methods.
+      def method_added(method_name)
+        super
+
+        desc = @_pending_mcp_desc
+        @_pending_mcp_desc = nil
+
+        # Only register public methods defined in this class (not inherited)
+        return unless public_method_defined?(method_name)
+        return if superclass.method_defined?(method_name)
+
+        _register_mcp_tool(action: method_name.to_sym, description: desc || "")
       end
 
       private
 
       def _register_mcp_tool(action:, description:)
-        tool_name    = _mcp_tool_name(action)
-        model_class  = _infer_model
-        action_sym   = action
+        tool_name   = _mcp_tool_name(action)
+        model_class = _infer_model
+        action_sym  = action
 
         # Build schema lazily to avoid DB connection at class load time
         schema_builder = -> {

@@ -9,8 +9,10 @@ module MonkeyMcp
       MonkeyMcp::Registry.reset!
     end
 
-    # Append POST /mcp route to the host application after initialization
+    # Append POST /mcp route once — guard against duplicate appends on reload
     config.after_initialize do |app|
+      next if app.routes.routes.any? { |r| r.defaults[:controller] == "monkey_mcp/mcp" }
+
       app.routes.append do
         post "/mcp", to: "monkey_mcp/mcp#handle"
       end

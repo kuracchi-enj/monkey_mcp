@@ -1,35 +1,126 @@
 # MonkeyMcp
 
-TODO: Delete this and the text below, and describe your gem
+`monkey_mcp` は Rails コントローラのアクションを [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) ツールとして自動公開する Rails Gem です。  
+JSON-RPC 2.0 準拠の `POST /mcp` エンドポイントを提供し、AI エージェントから直接 Rails アプリの機能を呼び出せるようにします。
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/monkey_mcp`. To experiment with that code, run `bin/console` for an interactive prompt.
+## 特徴
 
-## Installation
+- **自動ツール登録**: `include MonkeyMcp::Toolable` を追加するだけで、コントローラの public アクションが MCP ツールとして登録される
+- **input_schema 自動生成**: ActiveRecord の `columns_hash` からリクエストスキーマを自動生成
+- **mcp_desc デコレータ**: アクション直前に `mcp_desc "説明文"` を書くだけでツールの説明を設定
+- **Rails Engine**: `POST /mcp` ルートを自動でマウント
+- **内部認証**: ランダムトークンによるサブリクエスト認証でセキュリティを確保
 
-TODO: Replace `UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG` with your gem name right after releasing it to RubyGems.org. Please do not do it earlier due to security reasons. Alternatively, replace this section with instructions to install your gem from git if you don't plan to release to RubyGems.org.
+## インストール
 
-Install the gem and add to the application's Gemfile by executing:
+Gemfile に以下を追加:
 
-```bash
-bundle add UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+```ruby
+gem "monkey_mcp", github: "kuracchi-enj/monkey_mcp"
 ```
 
-If bundler is not being used to manage dependencies, install the gem by executing:
+ローカル開発の場合:
 
-```bash
-gem install UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+```ruby
+gem "monkey_mcp", path: "../monkey_mcp"
 ```
 
-## Usage
+## 使い方
 
-TODO: Write usage instructions here
+### 1. コントローラに Toolable を include する
 
-## Development
+```ruby
+class Api::V1::TasksController < ApplicationController
+  include MonkeyMcp::Toolable
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+  mcp_desc "タスク一覧を取得する"
+  def index
+    render json: Task.all
+  end
 
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+  mcp_desc "タスクを作成する"
+  def create
+    task = Task.create!(task_params)
+    render json: task, status: :created
+  end
+end
+```
 
-## Contributing
+`mcp_desc` を省略した場合も public メソッドは自動登録されます（description は空文字列）。
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/monkey_mcp.
+### 2. ApplicationController で内部トークンを認証する
+
+```ruby
+class ApplicationController < ActionController::Base
+  before_action :require_login
+
+  private
+
+  def require_login
+    # MonkeyMcp の内部サブリクエストはログイン不要にする
+    return if request.headers["X-Mcp-Internal-Token"] == MonkeyMcp.configuration.internal_token
+    redirect_to login_path unless logged_in?
+  end
+end
+```
+
+### 3. 設定（任意）
+
+`config/initializers/monkey_mcp.rb`:
+
+```ruby
+MonkeyMcp.configure do |config|
+  # サブリクエスト認証用トークン（デフォルト: 起動時にランダム生成）
+  config.internal_token = ENV.fetch("MCP_INTERNAL_TOKEN") { SecureRandom.hex(32) }
+
+  # input_schema から除外するカラム（デフォルト: created_at, updated_at）
+  config.excluded_columns = %w[created_at updated_at]
+end
+```
+
+### 4. 事前ロード設定
+
+`eager_load: false` な環境（development, test）でも MCP ツールが確実に登録されるよう、initializer でコントローラを参照:
+
+```ruby
+Rails.application.config.to_prepare do
+  Api::V1::TasksController
+end
+```
+
+## MCP ツールの動作
+
+### ツール一覧 (tools/list)
+
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+### ツール呼び出し (tools/call)
+
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"task_index","arguments":{}}}'
+```
+
+## ツール名の命名規則
+
+コントローラ名とアクション名から自動生成されます:
+
+| コントローラ | アクション | ツール名 |
+|---|---|---|
+| `Api::V1::TasksController` | `index` | `task_index` |
+| `Api::V1::TasksController` | `show` | `task_show` |
+| `Api::V1::CategoriesController` | `create` | `category_create` |
+
+## 開発
+
+```bash
+git clone https://github.com/kuracchi-enj/monkey_mcp
+cd monkey_mcp
+bundle install
+bundle exec rspec
+```
