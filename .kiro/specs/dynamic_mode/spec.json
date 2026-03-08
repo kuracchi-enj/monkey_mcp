@@ -1,0 +1,13 @@
+{
+  "feature": "dynamic_mode",
+  "title": "動的ロードモード（Dynamic Mode）",
+  "description": "monkey_mcp に 'tool_search + call_proxy' の最小ツールセットを追加し、tools/list の返却を極小化する dynamic mode を実装する（調査レポート案C-1）。",
+  "language": "ja",
+  "status": {
+    "requirements": "done",
+    "design": "done",
+    "tasks": "done",
+    "implementation": "pending"
+  },
+  "created_at": "2026-03-08"
+}
