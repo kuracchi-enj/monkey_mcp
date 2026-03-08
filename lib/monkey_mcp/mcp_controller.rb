@@ -34,7 +34,12 @@ module MonkeyMcp
       when "tools/list"
         handle_tools_list(id)
       when "tools/call"
-        handle_tools_call(id, params)
+        tool_name = params["name"]
+        case tool_name
+        when "tool_search" then handle_tool_search(id, params["arguments"] || {})
+        when "call_proxy"  then handle_call_proxy(id, params["arguments"] || {})
+        else                    handle_tools_call(id, params)
+        end
       else
         jsonrpc_error(id, -32_601, "Method not found: #{method}")
       end
@@ -49,10 +54,14 @@ module MonkeyMcp
     end
 
     def handle_tools_list(id)
-      tools = MonkeyMcp::Registry.all.map do |t|
-        { name: t[:name], description: t[:description], inputSchema: t[:input_schema] }
+      if MonkeyMcp.configuration.tool_listing_mode == :dynamic
+        jsonrpc_result(id, { tools: dynamic_meta_tools })
+      else
+        tools = MonkeyMcp::Registry.all.map do |t|
+          { name: t[:name], description: t[:description], inputSchema: t[:input_schema] }
+        end
+        jsonrpc_result(id, { tools: tools })
       end
-      jsonrpc_result(id, { tools: tools })
     end
 
     def handle_tools_call(id, params)
@@ -72,6 +81,120 @@ module MonkeyMcp
       })
     rescue MonkeyMcp::RouteNotFound => e
       jsonrpc_error(id, -32_601, e.message)
+    end
+
+    def handle_tool_search(id, arguments)
+      return jsonrpc_error(id, -32_602, "Invalid params: arguments must be an object") unless arguments.is_a?(Hash)
+
+      raw_query = arguments["query"]
+      return jsonrpc_error(id, -32_602, "Invalid params: query must be a string") unless raw_query.is_a?(String)
+
+      query = raw_query.strip
+      return jsonrpc_error(id, -32_602, "Invalid params: query must be a non-empty string") if query.empty?
+
+      raw_max = arguments["max_results"]
+      if !raw_max.nil?
+        unless raw_max.is_a?(Integer) && raw_max > 0
+          return jsonrpc_error(id, -32_602, "Invalid params: max_results must be a positive integer")
+        end
+      end
+
+      config      = MonkeyMcp.configuration
+      max_results = (raw_max || config.max_search_results).clamp(1, config.max_tool_search_results)
+
+      raw_filters = arguments["filters"] || {}
+      unless raw_filters.is_a?(Hash)
+        return jsonrpc_error(id, -32_602, "Invalid params: filters must be an object")
+      end
+      filters     = raw_filters.transform_keys(&:to_sym)
+
+      results = MonkeyMcp::ToolSearcher.new(MonkeyMcp::Registry.all).search(
+        query:       query,
+        filters:     filters,
+        max_results: max_results
+      )
+
+      jsonrpc_result(id, {
+        content: [{ type: "text", text: results.to_json }]
+      })
+    end
+
+    def handle_call_proxy(id, arguments)
+      return jsonrpc_error(id, -32_602, "Invalid params: arguments must be an object") unless arguments.is_a?(Hash)
+
+      raw_name = arguments["name"]
+      return jsonrpc_error(id, -32_602, "Invalid params: name must be a string") unless raw_name.is_a?(String)
+
+      tool_name = raw_name.strip
+      return jsonrpc_error(id, -32_602, "Invalid params: name must be a non-empty string") if tool_name.empty?
+
+      tool = MonkeyMcp::Registry.find(tool_name)
+      return jsonrpc_error(id, -32_602, "Unknown tool: #{tool_name}") unless tool
+
+      args = arguments["arguments"] || {}
+      return jsonrpc_error(id, -32_602, "Invalid params: arguments must be an object") unless args.is_a?(Hash)
+
+      status, body_str = internal_dispatch(tool, args)
+      result_text = status == 204 ? { success: true }.to_json : body_str
+      is_error = status < 200 || status >= 300
+
+      jsonrpc_result(id, {
+        content: [{ type: "text", text: result_text }],
+        **(is_error ? { isError: true } : {})
+      })
+    rescue MonkeyMcp::RouteNotFound => e
+      jsonrpc_error(id, -32_601, e.message)
+    end
+
+    def dynamic_meta_tools
+      [
+        {
+          name:        "tool_search",
+          description: "Search for available tools by keyword. Returns matching tools with their name, description, and input schema.",
+          inputSchema: {
+            "type"       => "object",
+            "properties" => {
+              "query"       => {
+                "type"        => "string",
+                "description" => "Natural language description of the tool you are looking for"
+              },
+              "filters"     => {
+                "type"        => "object",
+                "description" => "Optional filters to narrow results",
+                "properties"  => {
+                  "namespace" => {
+                    "type"        => "string",
+                    "description" => "Controller path prefix to filter by (e.g. \"api/v1\")"
+                  }
+                }
+              },
+              "max_results" => {
+                "type"        => "integer",
+                "description" => "Maximum number of results to return (defaults to server setting)"
+              }
+            },
+            "required"   => ["query"]
+          }
+        },
+        {
+          name:        "call_proxy",
+          description: "Execute a tool by name. Use tool_search first to discover the tool name and required arguments.",
+          inputSchema: {
+            "type"       => "object",
+            "properties" => {
+              "name"      => {
+                "type"        => "string",
+                "description" => "The tool name to execute (as returned by tool_search)"
+              },
+              "arguments" => {
+                "type"        => "object",
+                "description" => "Arguments to pass to the tool"
+              }
+            },
+            "required"   => ["name"]
+          }
+        }
+      ]
     end
 
     # Dispatch to the host application via Rack::MockRequest.

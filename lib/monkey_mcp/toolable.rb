@@ -45,6 +45,16 @@ module MonkeyMcp
 
       def _register_mcp_tool(action:, description:)
         tool_name       = _mcp_tool_name(action)
+
+        # Guard reserved meta-tool names (always blocked)
+        if %w[tool_search call_proxy].include?(tool_name)
+          msg = "[MonkeyMcp] Tool name '#{tool_name}' is reserved. " \
+                "User-defined tools cannot override reserved meta-tools."
+          logger = defined?(Rails) ? Rails.logger : nil
+          logger ? logger.warn(msg) : warn(msg)
+          return
+        end
+
         model_class     = _infer_model
         action_sym      = action
         controller_path = name.gsub("::", "/").gsub(/Controller$/, "").underscore
