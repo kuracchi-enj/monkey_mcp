@@ -7,14 +7,14 @@ require "action_controller/api"
 module MonkeyMcp
   class McpController < ActionController::API
     JSONRPC_VERSION  = "2.0"
-    PROTOCOL_VERSION = "2024-11-05"
+    PROTOCOL_VERSION = "2025-03-26"
 
     skip_before_action :verify_authenticity_token, raise: false
 
     def handle
       body = JSON.parse(request.body.read)
       result = dispatch_method(body)
-      render json: result
+      result == :accepted ? head(:accepted) : render(json: result)
     rescue JSON::ParserError
       render json: jsonrpc_error(nil, -32_700, "Parse error"), status: :bad_request
     end
@@ -30,7 +30,7 @@ module MonkeyMcp
       when "initialize"
         handle_initialize(id)
       when "notifications/initialized"
-        nil
+        :accepted
       when "tools/list"
         handle_tools_list(id)
       when "tools/call"
