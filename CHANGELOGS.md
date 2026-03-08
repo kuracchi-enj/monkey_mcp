@@ -2,6 +2,11 @@
 
 このファイルは `monkey_mcp` の主な変更履歴を記載します。
 
+## v0.3.0 - 2026-03-08
+
+### Changed
+- `my_task_app` 連携の疎通確認を実施し、Dynamic Mode（`tool_search` / `call_proxy`）でのタスク取得が正常に動作することを確認。
+
 ## v0.2.0 - 2026-03-08
 
 ### Added
