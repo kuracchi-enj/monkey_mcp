@@ -383,3 +383,7 @@ cd monkey_mcp
 rbenv exec bundle install
 rbenv exec bundle exec rspec
 ```
+
+# Lisence
+
+This project is licensed under the MIT License, see the LICENSE.txt file for details
